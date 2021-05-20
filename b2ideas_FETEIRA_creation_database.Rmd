@@ -1,0 +1,830 @@
+---
+title: "The impact of Covid-19 on firms' productivity and markups: database"
+author: "Jérémy Feteira"
+date: ""
+lang: fr
+output:
+ pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes
+ rmdformats::readthedown:
+   gallery: no
+   highlight: tango
+   lightbox: yes
+   self_contained: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(doParallel)
+```
+
+# Creation of the database
+
+```{r}
+setwd("D:/Comission_europeenne")
+countries_in_OECD <- c(
+  "Austria","Australia","Belgium","Canada","Chile","Colombia","Czech Republic","Denmark",
+  "Estonia","Finland","France","Germany","Greece","Hungary","Iceland","Ireland","Israel",
+  "Italy","Japan","Korea","Latvia","Lithuania","Luxembourg","Mexico","Netherlands","New Zealand",
+  "Norway","Poland","Portugal","Slovak Republic","Slovenia","Spain","Sweden","Switzerland",
+  "Turkey","United Kingdom","United States"
+)
+```
+
+## For GDP per capita
+
+I wanted to create the GDP per hour worked but due to a lack of data in some countries and in the recent years, I decided to go for the GDP per capita where we have much more data. The database was downloaded via the OECD website (https://stats.oecd.org/).
+
+```{r}
+data_GDP_capita <- read_csv("QNA_13052021100947951.csv")
+data_GDP_capita <- data_GDP_capita[,c(2,6,10,16,17)]
+data_GDP_capita$Country <- as.factor(data_GDP_capita$Country)
+## we only keep the OECD countries
+data_GDP_capita <- subset(data_GDP_capita, Country%in%countries_in_OECD)
+data_GDP_capita <- droplevels(data_GDP_capita)
+## we need Turkey and Colombia
+```
+
+For Turkey, I took two database from the OECD website and I created the GDP per capita by taking each GDP per quarter and dividing this value by the number of employed persons:
+
+- For GDP: 'OECD Quarterly National Accounts', 'US dollars, volume estimates, fixed PPPs, seasonally adjusted' (US dollars in millions in 2015)
+
+- For number of employed people: 'Short-Term Labour Market Statistics: Employed population' (in thousands)
+
+```{r}
+## dataframe for GDP per quarter
+data_GDP <- read_csv("QNA_12052021161822390.csv")
+data_GDP <- data_GDP[1:3040,c(2, 6, 10, 16, 17)]
+data_GDP <- subset(data_GDP, Country%in%countries_in_OECD)
+data_GDP$Country <- as.factor(data_GDP$Country)
+data_GDP <- droplevels(data_GDP)
+```
+
+```{r}
+## dataframe for number of workers
+data_nb_workers <- read_csv("STLABOUR_12052021182757854.csv")
+data_nb_workers <- data_nb_workers[,c(2, 6, 10, 17)]
+data_nb_workers <- subset(data_nb_workers, Country%in%countries_in_OECD)
+data_nb_workers$Country <- as.factor(data_nb_workers$Country)
+data_nb_workers <- droplevels(data_nb_workers)
+```
+
+I had an issue with the number of workers in 2005, so I put NA.
+
+```{r}
+data_Turkey_GDP <- data_GDP[data_GDP$Country=="Turkey",]
+data_Turkey_nb_workers <- data_nb_workers[data_nb_workers$Country=="Turkey",]
+data_Turkey_nb_workers <- rbind(c("Turkey", ".", "Q1-2005", NA), data_Turkey_nb_workers)
+data_Turkey_nb_workers <- rbind(c("Turkey", ".", "Q2-2005", NA), data_Turkey_nb_workers)
+data_Turkey_nb_workers <- rbind(c("Turkey", ".", "Q3-2005", NA), data_Turkey_nb_workers)
+data_Turkey_nb_workers <- rbind(c("Turkey", ".", "Q4-2005", NA), data_Turkey_nb_workers)
+data_Turkey_nb_workers$Value <- as.integer(data_Turkey_nb_workers$Value)
+
+data_Turkey_nb_workers <- data_Turkey_nb_workers[order(data_Turkey_nb_workers$Time),]
+data_Turkey_GDP <- data_Turkey_GDP[order(data_Turkey_GDP$Period),]
+
+data_Turkey_GDP$Value <- (data_Turkey_GDP$Value*1000000)/(data_Turkey_nb_workers$Value*1000)
+```
+
+```{r}
+data_GDP_capita <- rbind(data_GDP_capita, data_Turkey_GDP)
+data_GDP_capita <- data_GDP_capita[order(data_GDP_capita$Period),]
+data_GDP_capita <- data_GDP_capita[order(as.character(data_GDP_capita$Country)),]
+```
+
+For Colombia, no data were available so I put NA everywhere.
+
+```{r}
+## we create NA for missing values
+period <- levels(as.factor(data_GDP_capita$Period))
+for(i in 1:length(period)){
+  data_add <- as.data.frame( matrix(c("Colombia", ".", period[i],".",NA), nrow=1))
+  colnames(data_add) <- colnames(data_GDP_capita)
+  data_GDP_capita <- rbind(data_GDP_capita, data_add)
+}
+
+data_GDP_capita <- data_GDP_capita[order(as.character(data_GDP_capita$Country)),]
+```
+
+I saw that Japan and Mexico only had, respectively, 54 and 64 values out of 84. The values for Japan only started in the third quarter of 2007 and for Mexico in Q1 2005. So I added NA values to reach the 84 for both countries.
+
+```{r}
+data_GDP_capita$Period[data_GDP_capita$Country=="Japan"]
+list_quarters <- c(levels(as.factor(data_GDP_capita$Period)))[c(1:8,22:29,43:49,64:70)]
+for(i in 1:length(list_quarters)){
+  data_GDP_capita <- rbind(
+    data_GDP_capita, 
+    c("Japan",".",  list_quarters[i], ".",NA)
+    )
+}
+```
+
+```{r}
+data_GDP_capita$Period[data_GDP_capita$Country=="Mexico"]
+list_quarters <- c(levels(as.factor(data_GDP_capita$Period)))[c(1:5,22:26,43:47,64:68)]
+for(i in 1:length(list_quarters)){
+  data_GDP_capita <- rbind(
+    data_GDP_capita, 
+    c("Mexico",".",  list_quarters[i], ".",NA)
+    )
+}
+
+data_GDP_capita <- data_GDP_capita[order(data_GDP_capita$Period),]
+data_GDP_capita <- data_GDP_capita[order(as.character(data_GDP_capita$Country)),]
+```
+
+```{r}
+table(data_GDP_capita$Country)
+## Same number of values per country
+```
+
+
+
+
+## For sanitary indexes
+
+This database comes from the github of the Oxford University (https://github.com/OxCGRT/covid-policy-tracker).
+
+```{r}
+## dataframe for sanitary indexes
+data_sanitary_initial <- read_csv("OxCGRT_latest.csv")
+table(data_sanitary_initial$CountryName)
+```
+
+3 countries do not have 498 values: Canada, UK and US. The reason beyond that is because these countries have more specific data, per region/state for example, so we will just keep the Jurisdiction which are national.
+
+```{r}
+data_sanitary_initial <- data_sanitary_initial[data_sanitary_initial$Jurisdiction=="NAT_TOTAL",]
+table(data_sanitary_initial$CountryName)
+```
+
+```{r}
+data_sanitary <- data_sanitary_initial[, c(1, 6, 7, 9, 11, 13, 15, 17, 19, 21, 22, 27, 29, 30:33, 35, 42, 46, 48, 50)]
+
+data_sanitary <- data_sanitary %>% rename(Country=CountryName)
+
+
+# creation of the database with stringency index
+## Keep only the countries of the OECD
+data_sanitary$Country <- as.factor(data_sanitary$Country)
+data_sanitary <- subset(data_sanitary, Country%in%countries_in_OECD)
+data_sanitary <- droplevels(data_sanitary)
+
+## cut into quarters
+data_sanitary$Date <- as.Date(as.character(data_sanitary$Date), "%Y%m%d")
+data_sanitary$Date <- cut(data_sanitary$Date, breaks="quarter")
+data_sanitary$Date <- as.factor(data_sanitary$Date)
+levels(data_sanitary$Date) <- c("Q1-2020", "Q2-2020", "Q3-2020", "Q4-2020", "Q1-2021", "Q2-2021")
+```
+
+
+```{r}
+table(as.factor(data_sanitary$Country))
+```
+
+
+```{r}
+## Mean for each quarter and each index
+new_data <- data_sanitary %>% group_by(Date, Country) %>% summarise(
+  `C1_School closing`=round(mean(`C1_School closing`, na.rm=TRUE), 4),
+  `C2_Workplace closing`=round(mean(`C2_Workplace closing`, na.rm=TRUE), 4),
+  `C3_Cancel public events`=round(mean(`C3_Cancel public events`, na.rm=TRUE), 4),
+  `C4_Restrictions on gatherings`=round(mean(`C4_Restrictions on gatherings`, na.rm=TRUE), 4),
+  `C5_Close public transport`=round(mean(`C5_Close public transport`, na.rm=TRUE), 4),
+  `C6_Stay at home requirements`=round(mean(`C6_Stay at home requirements`, na.rm=TRUE), 4),
+  `C7_Restrictions on internal movement`=round(mean(`C7_Restrictions on internal movement`, na.rm=TRUE), 4),
+  `C8_International travel controls`=round(mean(`C8_International travel controls`, na.rm=TRUE), 4),
+  `E1_Income support`=round(mean(`E1_Income support`, na.rm=TRUE), 4),
+  `H1_Public information campaigns`=round(mean(`H1_Public information campaigns`, na.rm=TRUE), 4),
+  `H2_Testing policy`=round(mean(`H2_Testing policy`, na.rm=TRUE), 4),
+  `H3_Contact tracing`=round(mean(`H3_Contact tracing`, na.rm=TRUE), 4),
+  `H4_Emergency investment in healthcare`=round(mean(`H4_Emergency investment in healthcare`, na.rm=TRUE), 4),
+  `H5_Investment in vaccines`=round(mean(`H5_Investment in vaccines`, na.rm=TRUE), 4),
+  `H6_Facial Coverings`=round(mean(`H6_Facial Coverings`, na.rm=TRUE), 4),
+  `H7_Vaccination policy`=round(mean(`H7_Vaccination policy`, na.rm=TRUE), 4),
+  StringencyIndex=round(mean(StringencyIndex, na.rm=TRUE), 4),
+  GovernmentResponseIndex=round(mean(GovernmentResponseIndex, na.rm=TRUE), 4),
+  ContainmentHealthIndex=round(mean(ContainmentHealthIndex, na.rm=TRUE), 4),
+  EconomicSupportIndex=round(mean(EconomicSupportIndex, na.rm=TRUE), 4)
+  )
+
+data_sanitary <- new_data[order(as.character(new_data$Country)),]
+```
+
+Now, I added values to the previous quarters between 2000 and 2020. Because Covid-19 did not exist at that time, we will put 0 everywhere. For more informations on how the indexes are calculated, you can learn more on the website: https://github.com/OxCGRT/covid-policy-tracker/tree/master/documentation.
+
+```{r}
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+list_quarters <- c(levels(as.factor(data_GDP_capita$Period)))[c(1:20,22:41,43:62,64:83)]
+for(i in 1:length(list_quarters)){
+  for(j in 1:length(countries_in_OECD)){
+    data_add <- as.data.frame(
+      matrix(
+        c(list_quarters[i],countries_in_OECD[j],0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,
+          0.0,0.0,0.0,0.0,0.0,0.0,0.0), nrow=1
+        )
+      )
+    colnames(data_add) <- colnames(data_sanitary)
+    data_add[3:22] <- sapply(data_add[3:22],as.numeric)
+    data_sanitary <- rbind(data_sanitary, data_add)
+  }
+}
+
+stopImplicitCluster()
+```
+
+```{r}
+data_sanitary <- data_sanitary[order(as.character(data_sanitary$Date)),]
+data_sanitary <- data_sanitary[order(as.character(data_sanitary$Country)),]
+data_sanitary <- data_sanitary %>% rename(Period=Date)
+```
+
+
+## Combine the two dataframes
+
+First I added the two first quarters of 2021 on the GDP per capita dataframe to have the same number of value for each country.
+
+```{r}
+for(i in 1:length(countries_in_OECD)){
+  data_GDP_capita <- rbind(
+    data_GDP_capita, 
+    c(countries_in_OECD[i],".",  "Q1-2021", ".", NA),
+    c(countries_in_OECD[i],".",  "Q2-2021", ".", NA)
+    )
+}
+```
+
+For Korea, there are were no data, so we will create missing values:
+
+```{r}
+list_quarters <- c(levels(as.factor(data_sanitary$Period)))[c(21,22,43,44,65,86)]
+
+test <- data_sanitary
+for(i in 1:length(list_quarters)){
+  data_add <- as.data.frame(
+    matrix(
+      c(list_quarters[i],"Korea",NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA), nrow=1
+      )
+    )
+  colnames(data_add) <- colnames(data_sanitary)
+  data_add[3:22] <- sapply(data_add[3:22],as.numeric)
+  data_sanitary <- rbind(data_sanitary, data_add)
+}
+
+data_GDP_capita <- data_GDP_capita[order(as.character(data_GDP_capita$Country)),]
+data_GDP_capita <- data_GDP_capita[order(as.character(data_GDP_capita$Period)),]
+data_GDP_capita <- data_GDP_capita[order(as.character(data_GDP_capita$Country)),]
+
+data_sanitary <- data_sanitary[order(as.character(data_sanitary$Country)),]
+data_sanitary <- data_sanitary[order(as.character(data_sanitary$Period)),]
+data_sanitary <- data_sanitary[order(as.character(data_sanitary$Country)),]
+```
+
+```{r}
+table(data_GDP_capita$Period==data_sanitary$Period)
+table(data_GDP_capita$Country==data_sanitary$Country)
+```
+
+All values are equals.
+
+
+Then I combined the 2 dataframes into a single one:
+
+```{r}
+data <- cbind(data_GDP_capita, data_sanitary)
+data <- data[-c(6,7)]
+colnames(data)[5] <- "GDP_per_capita"
+colnames(data)[2] <- "GDP_measure"
+
+data$Period <- as.factor(data$Period)
+```
+
+```{r}
+## mid-save
+require("writexl")
+write_xlsx(data,"D:/Comission_europeenne/data.xlsx")
+```
+
+
+## For each sectors
+
+I could not find another indicator to calculate productivity by sector so I took the quarterly GVA by country on the eurostat website (https://appsso.eurostat.ec.europa.eu/nui/show.do?dataset=naidq_10_a10&lang=en) and I divided it by the number of people employed by sector, which comes from the OECD website (https://stats.oecd.org/).
+
+```{r}
+data_workers_sectors <- read_csv("QNA_16052021163914526.csv")
+#data_nb_workers_sectors <- data_workers_sectors[data_workers_sectors$Measure=="Persons, seasonally adjusted",]
+
+data_nb_workers_sectors <- data_workers_sectors[,c(2,4,6,10,17)]
+
+## too much data for Spain ==> because only country with Q1 2021
+
+data_nb_workers_sectors$Country <- as.factor(data_nb_workers_sectors$Country)
+data_nb_workers_sectors$Period <- as.factor(data_nb_workers_sectors$Period)
+data_nb_workers_sectors$Subject <- as.factor(data_nb_workers_sectors$Subject)
+
+table(as.factor(data_nb_workers_sectors$Country))
+```
+
+
+```{r}
+countries <- levels(data_nb_workers_sectors$Country)
+countries <- countries[-29]
+sector <- levels(data_nb_workers_sectors$Subject)
+
+## we add missing values for Q1 2021
+for(i in 1:length(countries)){
+  for(j in 1:length(sector)){
+    data_add <- as.data.frame(
+      matrix(c(countries[i], sector[j], ".", "Q1-2021", NA), nrow=1)
+      )
+    colnames(data_add) <- colnames(data_nb_workers_sectors)
+    data_nb_workers_sectors <- rbind(data_nb_workers_sectors, data_add)
+  }
+}
+
+## now we add missing values to Korea and Chile
+table(data_nb_workers_sectors$Period[data_nb_workers_sectors$Country=="Korea"])
+table(data_nb_workers_sectors$Period[data_nb_workers_sectors$Country=="Chile"])
+countries <- c("Korea", "Chile")
+period_Korea_Chile <- c(
+  "Q1-2000", "Q1-2001", "Q1-2002", "Q1-2003", "Q1-2004", "Q1-2005", "Q1-2006", "Q1-2007", "Q1-2008", 
+  "Q1-2009", "Q1-2010","Q1-2011", "Q1-2012","Q2-2000", "Q2-2001", "Q2-2002", "Q2-2003", "Q2-2004", "Q2-2005",
+  "Q2-2006", "Q2-2007", "Q2-2008", "Q2-2009", "Q2-2010", "Q2-2011", "Q2-2012","Q3-2000", "Q3-2001",
+  "Q3-2002","Q3-2003", "Q3-2004", "Q3-2005", "Q3-2006", "Q3-2007","Q3-2008", "Q3-2009", "Q3-2010",
+  "Q3-2011", "Q3-2012","Q4-2000", "Q4-2001", "Q4-2002", "Q4-2003", "Q4-2004", "Q4-2005","Q4-2006", "Q4-2007",
+  "Q4-2008", "Q4-2009", "Q4-2010", "Q4-2011", "Q4-2012"
+)
+
+for(k in 1:length(countries)){
+  for(i in 1:length(period_Korea_Chile)){
+    for(j in 1:length(sector)){
+      data_add <- as.data.frame(
+        matrix(c(countries[k], sector[j], NA, period_Korea_Chile[i], NA), nrow=1)
+        )
+      colnames(data_add) <- colnames(data_nb_workers_sectors)
+      data_nb_workers_sectors <- rbind(data_nb_workers_sectors, data_add)
+    }
+  }
+}
+
+table(data_nb_workers_sectors$Country)
+```
+
+There are some data missing for Autralia, Iceland, Mexico and New Zealand, so I will put NA as value for the periods.
+
+```{r}
+## Australia
+table(data_nb_workers_sectors$Period[data_nb_workers_sectors$Country=="Australia"])
+period_Australia <- c("Q3-2020", "Q4-2020")
+for(i in 1:length(period_Australia)){
+  for(j in 1:length(sector)){
+    data_add <- as.data.frame(
+      matrix(c("Australia", sector[j], NA, period_Australia[i], NA), nrow=1)
+      )
+    colnames(data_add) <- colnames(data_nb_workers_sectors)
+    data_nb_workers_sectors <- rbind(data_nb_workers_sectors, data_add)
+  }
+}
+
+## Iceland
+table(data_nb_workers_sectors$Period[data_nb_workers_sectors$Country=="Iceland"])
+period_Iceland <- c(
+  "Q1-2000", "Q1-2001", "Q1-2002", "Q1-2003", "Q1-2004", "Q1-2005", "Q1-2006", "Q1-2007", "Q2-2000",
+  "Q2-2001", "Q2-2002", "Q2-2003", "Q2-2004", "Q2-2005", "Q2-2006", "Q2-2007","Q3-2000", "Q3-2001",
+  "Q3-2002","Q3-2003", "Q3-2004", "Q3-2005", "Q3-2006", "Q3-2007","Q4-2000", "Q4-2001", "Q4-2002",
+  "Q4-2003", "Q4-2004", "Q4-2005","Q4-2006", "Q4-2007"
+)
+for(i in 1:length(period_Iceland)){
+  for(j in 1:length(sector)){
+    data_add <- as.data.frame(
+      matrix(c("Iceland", sector[j], NA, period_Iceland[i], NA), nrow=1)
+      )
+    colnames(data_add) <- colnames(data_nb_workers_sectors)
+    data_nb_workers_sectors <- rbind(data_nb_workers_sectors, data_add)
+  }
+}
+
+## Mexico
+table(data_nb_workers_sectors$Period[data_nb_workers_sectors$Country=="Mexico"])
+period_Mexico <- c(
+  "Q1-2000", "Q1-2001", "Q1-2002", "Q1-2003", "Q1-2004", "Q2-2000", "Q2-2001", "Q2-2002", "Q2-2003",
+  "Q2-2004","Q3-2000", "Q3-2001", "Q3-2002","Q3-2003", "Q3-2004","Q4-2000", "Q4-2001", "Q4-2002",
+  "Q4-2003", "Q4-2004"
+)
+for(i in 1:length(period_Mexico)){
+  for(j in 1:length(sector)){
+    data_add <- as.data.frame(
+      matrix(c("Mexico", sector[j], NA, period_Mexico[i], NA), nrow=1)
+      )
+    colnames(data_add) <- colnames(data_nb_workers_sectors)
+    data_nb_workers_sectors <- rbind(data_nb_workers_sectors, data_add)
+  }
+}
+
+## New Zealand
+table(data_nb_workers_sectors$Period[data_nb_workers_sectors$Country=="New Zealand"])
+period_New_Zealand <- c(
+  "Q1-2000", "Q1-2001", "Q1-2002", "Q1-2003", "Q1-2004", "Q1-2005", "Q1-2006", "Q1-2007", "Q1-2008",
+  "Q2-2000", "Q2-2001", "Q2-2002", "Q2-2003", "Q2-2004", "Q2-2005", "Q2-2006", "Q2-2007", "Q2-2008",
+  "Q3-2000", "Q3-2001", "Q3-2002","Q3-2003", "Q3-2004", "Q3-2005", "Q3-2006", "Q3-2007","Q3-2008", 
+  "Q4-2000", "Q4-2001", "Q4-2002", "Q4-2003", "Q4-2004", "Q4-2005","Q4-2006", "Q4-2007","Q4-2008"
+)
+for(i in 1:length(period_New_Zealand)){
+  for(j in 1:length(sector)){
+    data_add <- as.data.frame(
+      matrix(c("New Zealand", sector[j], NA, period_New_Zealand[i], NA), nrow=1)
+      )
+    colnames(data_add) <- colnames(data_nb_workers_sectors)
+    data_nb_workers_sectors <- rbind(data_nb_workers_sectors, data_add)
+  }
+}
+
+table(data_nb_workers_sectors$Country, data_nb_workers_sectors$Subject)
+## 85 everywhere
+```
+
+Now, I took the database on the gross value added by sector:
+
+```{r}
+data_GVA_sectors <- read_csv("naidq_10_a10_1_Data.csv")
+data_GVA_sectors <- data_GVA_sectors[,c(1:5,7)]
+data_GVA_sectors$GEO <- as.factor(data_GVA_sectors$GEO)
+data_GVA_sectors$TIME <- as.factor(data_GVA_sectors$TIME)
+levels(data_GVA_sectors$TIME) <- c(
+  "Q1-2000","Q2-2000","Q3-2000","Q4-2000","Q1-2001","Q2-2001","Q3-2001","Q4-2001","Q1-2002","Q2-2002",
+  "Q3-2002","Q4-2002","Q1-2003","Q2-2003","Q3-2003","Q4-2003","Q1-2004","Q2-2004","Q3-2004","Q4-2004",
+  "Q1-2005","Q2-2005","Q3-2005","Q4-2005","Q1-2006","Q2-2006","Q3-2006","Q4-2006","Q1-2007","Q2-2007",
+  "Q3-2007","Q4-2007","Q1-2008","Q2-2008","Q3-2008","Q4-2008","Q1-2009","Q2-2009","Q3-2009","Q4-2009",
+  "Q1-2010","Q2-2010","Q3-2010","Q4-2010","Q1-2011","Q2-2011","Q3-2011","Q4-2011","Q1-2012","Q2-2012",
+  "Q3-2012","Q4-2012","Q1-2013","Q2-2013","Q3-2013","Q4-2013","Q1-2014","Q2-2014","Q3-2014","Q4-2014",
+  "Q1-2015","Q2-2015","Q3-2015","Q4-2015","Q1-2016","Q2-2016","Q3-2016","Q4-2016",
+  "Q1-2017","Q2-2017","Q3-2017","Q4-2017","Q1-2018","Q2-2018","Q3-2018","Q4-2018",
+  "Q1-2019","Q2-2019","Q3-2019","Q4-2019","Q1-2020","Q2-2020","Q3-2020","Q4-2020","Q1-2021"
+  )
+
+colnames(data_GVA_sectors) <- c("Period","Country","Sector","Measure","Unit","Value")
+
+
+data_GVA_sectors$Country <- 
+  plyr::revalue(data_GVA_sectors$Country, 
+          c("Germany (until 1990 former territory of the FRG)"="Germany",
+            "Slovakia"="Slovak Republic","Czechia"="Czech Republic","South Korea"="Korea")
+          )
+data_GVA_sectors$Sector <- as.factor(data_GVA_sectors$Sector)
+
+table(data_GVA_sectors$Country)
+table(data_nb_workers_sectors$Country)
+
+## remove: Colombia, Turkey
+## misses: Israel, United Kingdom, Australia, Iceland, New Zealand
+```
+
+```{r}
+## we remove the 5 countries without data for number of workers by sector
+data_GVA_sectors_short <- 
+  data_GVA_sectors[!data_GVA_sectors$Country%in%c("Colombia","Turkey"),]
+data_GVA_sectors_short <- droplevels(data_GVA_sectors_short)
+
+countries <- c("Israel","United Kingdom","Australia", "Iceland", "New Zealand")
+sector <- levels(data_GVA_sectors$Sector)
+period_GVA <- levels(data_GVA_sectors$Period)
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+## we create NA for missing values
+for(i in 1:length(countries)){
+  for(j in 1:length(sector)){
+    for(k in 1:length(period_GVA)){
+      data_add <- as.data.frame(
+        matrix(c(period_GVA[k], countries[i], sector[j], NA, NA, NA), nrow=1)
+        )
+      colnames(data_add) <- colnames(data_GVA_sectors_short)
+      data_GVA_sectors_short <- rbind(data_GVA_sectors_short, data_add)
+    }
+  }
+}
+
+stopImplicitCluster()
+```
+
+```{r}
+table(data_GVA_sectors_short$Country)
+table(data_nb_workers_sectors$Country)
+
+levels(data_GVA_sectors_short$Country) %in% levels(data_nb_workers_sectors$Country)
+## same countries and same number of values
+```
+
+```{r}
+colnames(data_nb_workers_sectors) <- c("Country","Sector","Measure","Period","Value")
+levels(data_nb_workers_sectors$Sector) <- c(
+  "Agriculture, forestry and fishing", "Construction",
+  "Wholesale and retail trade, transport, accommodation and food service activities",
+  "Financial and insurance activities", "Industry (except construction)",
+  "Information and communication", "Other service activities", 
+  "Professional, scientific and technical activities; administrative and support service activities",
+  "Public administration, defence, education, human health and social work activities",
+  "Real estate activities"
+)
+
+levels(data_GVA_sectors_short$Sector) <- c(
+  "Agriculture, forestry and fishing", "Other service activities", "Construction", 
+  "Financial and insurance activities","Industry (except construction)", "Information and communication",
+  "Professional, scientific and technical activities; administrative and support service activities",
+  "Public administration, defence, education, human health and social work activities",
+  "Real estate activities",
+  "Wholesale and retail trade, transport, accommodation and food service activities"
+)
+```
+
+```{r}
+## we order the dataframes
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Country)),]
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Sector)),]
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Period)),]
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Country)),]
+
+data_nb_workers_sectors <- data_nb_workers_sectors[order(as.character(data_nb_workers_sectors$Country)),]
+data_nb_workers_sectors <- data_nb_workers_sectors[order(as.character(data_nb_workers_sectors$Sector)),]
+data_nb_workers_sectors <- data_nb_workers_sectors[order(as.character(data_nb_workers_sectors$Period)),]
+data_nb_workers_sectors <- data_nb_workers_sectors[order(as.character(data_nb_workers_sectors$Country)),]
+```
+
+```{r}
+data_GVA_sectors_short$Value <- gsub(',', '', data_GVA_sectors_short$Value)
+data_GVA_sectors_short$Value <- as.numeric(data_GVA_sectors_short$Value)
+data_nb_workers_sectors$Value <- gsub(',', '', data_nb_workers_sectors$Value)
+data_nb_workers_sectors$Value <- as.numeric(data_nb_workers_sectors$Value)
+```
+
+I verified if the data were the same:
+
+```{r}
+table(data_GVA_sectors_short$Period==data_nb_workers_sectors$Period)
+table(data_GVA_sectors_short$Country==data_nb_workers_sectors$Country)
+table(data_GVA_sectors_short$Sector==data_nb_workers_sectors$Sector)
+```
+
+They are, so we can add the GVA per capita by country:
+
+```{r}
+GVA_per_capita <- (data_GVA_sectors_short$Value*1000000)/(data_nb_workers_sectors$Value*1000)
+```
+
+```{r}
+data_GVA_sectors_short$Value <- GVA_per_capita
+data_GVA_sectors_short$Unit <- as.factor(data_GVA_sectors_short$Unit)
+levels(data_GVA_sectors_short$Unit) <- c("Current prices, national currency")
+data_GVA_sectors_short$Measure <- as.factor(data_GVA_sectors_short$Measure)
+```
+
+
+```{r}
+test <- na.omit(data_GVA_sectors_short)
+test <- droplevels(test)
+table(test$Country)
+## 24 countries are complete, missing 13
+```
+
+I couldn't find quarterly data for Canada, Colombia, Japan, Turkey and the United States so I put NA everywhere.
+
+```{r}
+countries <- c("Canada", "Colombia", "Japan", "Turkey", "United States")
+period_GVA <- levels(data_GVA_sectors_short$Period)
+sector <- levels(data_GVA_sectors_short$Sector)
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+for(i in 1:length(countries)){
+  for(j in 1:length(sector)){
+    for(k in 1:length(period_GVA)){
+      data_add <- as.data.frame(
+        matrix(c(period_GVA[k], countries[i], sector[j], NA, NA, NA), nrow=1)
+        )
+      colnames(data_add) <- colnames(data_GVA_sectors_short)
+      data_GVA_sectors_short <- rbind(data_GVA_sectors_short, data_add)
+    }
+  }
+}
+
+stopImplicitCluster()
+
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Country)),]
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Sector)),]
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Period)),]
+data_GVA_sectors_short <- data_GVA_sectors_short[order(as.character(data_GVA_sectors_short$Country)),]
+```
+
+
+## Combine the GVA per capita by sector with the main data
+
+Now, we need to create a variable for each sector and add it to the previous dataframe with all the data:
+
+```{r}
+#library(readxl)
+#data <- read_excel("data.xlsx")
+```
+
+
+```{r}
+data$Period <- as.factor(data$Period)
+
+## we remove the 2nd quarter of 2021 in the previous database
+data <- data[!data$Period=="Q2-2021",]
+data <- droplevels(data)
+
+## we order by period then country like the other dataframe
+data <- data[order(as.character(data$Country)),]
+data <- data[order(as.character(data$Period)),]
+data <- data[order(as.character(data$Country)),]
+```
+
+
+```{r}
+table(levels(data$Period)%in%levels(data_GVA_sectors_short$Period))
+
+table(data$Period==data_GVA_sectors_short$Period[data_GVA_sectors_short$Sector=="Construction"])
+table(data$Country==data_GVA_sectors_short$Country[data_GVA_sectors_short$Sector=="Construction"])
+
+table(data$Country)
+table(data_GVA_sectors_short$Country)
+```
+
+```{r}
+Unit_sector <- data_GVA_sectors_short$Unit[data_GVA_sectors_short$Sector=="Agriculture, forestry and fishing"]
+
+agriculture_forestry_fishing <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Agriculture, forestry and fishing"]
+
+other_service_activities <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Other service activities"]
+
+construction <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Construction"]
+
+financial_insurance <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Financial and insurance activities"]
+
+industry_no_construction <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Industry (except construction)"]
+
+information_communication <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Information and communication"]
+
+professionnal_scientific_technical_administrative_support <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Professional, scientific and technical activities; administrative and support service activities"]
+
+public_defence_education_health_social <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Public administration, defence, education, human health and social work activities"]
+
+real_estate <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Real estate activities"]
+
+wholesale_retail_transport_accomodation_food <- 
+  data_GVA_sectors_short$Value[data_GVA_sectors_short$Sector=="Wholesale and retail trade, transport, accommodation and food service activities"]
+
+data_perso <- cbind(
+  data, Unit_sector, agriculture_forestry_fishing, other_service_activities, construction,
+  financial_insurance, industry_no_construction, information_communication,
+  professionnal_scientific_technical_administrative_support, public_defence_education_health_social,
+  real_estate, wholesale_retail_transport_accomodation_food
+  )
+```
+
+```{r}
+data_perso <- data_perso %>% separate(Period, c("Quarter", "Year"))
+```
+
+
+```{r}
+test <- na.omit(data_perso)
+test <- droplevels(test)
+table(test$Country)
+## 24 countries are complete, 13 incomplete or no data
+```
+
+# Database with the same currency (in current prices, euro)
+
+```{r}
+#library(readxl)
+#data_perso <- read_excel("D:/Comission_europeenne/data_perso.xlsx")
+```
+
+```{r}
+countries_with_data_by_sector <- na.omit(data_perso)
+```
+
+
+```{r}
+data_perso$Unit_sector_euro <- data_perso$Unit_sector
+data_perso$Unit_sector_euro <- as.factor(data_perso$Unit_sector_euro)
+levels(data_perso$Unit_sector_euro) <- "Current prices, euro"
+data_perso$agriculture_forestry_fishing_euro <- as.numeric(data_perso$agriculture_forestry_fishing)
+data_perso$other_service_activities_euro <- as.numeric(data_perso$other_service_activities)
+data_perso$construction_euro <- as.numeric(data_perso$construction)
+data_perso$financial_insurance_euro <- as.numeric(data_perso$financial_insurance)
+data_perso$industry_no_construction_euro <- as.numeric(data_perso$industry_no_construction)
+data_perso$information_communication_euro <- as.numeric(data_perso$information_communication)
+data_perso$professionnal_scientific_technical_administrative_support_euro <-
+  as.numeric(data_perso$professionnal_scientific_technical_administrative_support)
+data_perso$public_defence_education_health_social_euro <-
+  as.numeric(data_perso$public_defence_education_health_social)
+data_perso$real_estate_euro <- as.numeric(data_perso$real_estate)
+data_perso$wholesale_retail_transport_accomodation_food_euro <-
+  as.numeric(data_perso$wholesale_retail_transport_accomodation_food)
+```
+
+```{r}
+table(countries_with_data_by_sector$Country)
+
+countries_no_euro <- c("Czech Republic", "Denmark", "Hungary", "Korea", "Norway", "Poland", "Sweden",
+                       "Switzerland")
+exchange_rate <- c(0.039, 0.13, 0.0028, 0.00073, 0.1, 0.22, 0.099, 0.91)
+
+for(i in 1:length(countries_no_euro)){
+  data_perso$agriculture_forestry_fishing_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$agriculture_forestry_fishing_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+  
+  data_perso$other_service_activities_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$other_service_activities_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$construction_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$construction_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$financial_insurance_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$financial_insurance_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$industry_no_construction_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$industry_no_construction_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$information_communication_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$information_communication_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$professionnal_scientific_technical_administrative_support_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$professionnal_scientific_technical_administrative_support_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$public_defence_education_health_social_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$public_defence_education_health_social_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$real_estate_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$real_estate_euro[data_perso$Country==countries_no_euro[i]]*exchange_rate[i][1]
+    
+  data_perso$wholesale_retail_transport_accomodation_food_euro[data_perso$Country==countries_no_euro[i]] <-
+    data_perso$wholesale_retail_transport_accomodation_food_euro[data_perso$Country==countries_no_euro[i]]*
+    exchange_rate[i][1]
+}
+```
+
+# Exportation of personal data base
+
+This database will be used to create models.
+
+```{r}
+require("writexl")
+write_xlsx(data_perso,"D:/Comission_europeenne/data_perso.xlsx")
+```
+
+# Exportation of the final database
+
+This is the database I gave for the challenge.
+
+```{r}
+data_perso$Unit_sector <- as.character(data_perso$Unit_sector)
+test <- data_perso
+test$Unit_sector_euro <- as.character(test$Unit_sector_euro)
+test[is.na(test)] <- "."
+```
+
+
+```{r}
+require("writexl")
+write_xlsx(test, "D:/Comission_europeenne/database_OECD_quarterly_2000_2021.xlsx")
+```
+
+
+# Data missing
+
+- Missing GVA per sector: Israel, United Kingdom, Australia, Iceland, New Zealand
+
+- Missing number of workers per sector: Colombia, Turkey, USA
+
+- No data: Canada, Japan
+
+- Canada: only hours worked
+- Colombia: nothing
+- Japan: Nothing
+- Turkey: Nothing

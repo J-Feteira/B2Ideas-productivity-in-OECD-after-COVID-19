@@ -1,0 +1,541 @@
+---
+title: "The impact of Covid-19 on firms' productivity and markups: models"
+author: "Jérémy Feteira"
+date: ""
+lang: fr
+output:
+ pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes
+ rmdformats::readthedown:
+   gallery: no
+   highlight: tango
+   lightbox: yes
+   self_contained: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package}
+library(readxl)
+library(plm)
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(stargazer)
+library(lmtest)
+```
+
+```{r}
+# si above = TRUE on a un header_above
+tab_fun <- function(tab, above = FALSE, title = title, font_size = 10, header = NULL){
+  if(above){
+    tab %>% kable(caption = title) %>%
+    kable_styling(font_size = font_size, full_width=FALSE, stripe_color = "lightgray", stripe_index = 0,
+                  latex_options = c("HOLD_position", "striped"), position = "center") %>%
+    add_header_above(header = header, bold=TRUE, color="red")%>%
+    column_spec(1, bold=T) %>%
+    row_spec(0, bold=T)
+  } else {
+    tab %>% kable(caption = title) %>%
+      kable_styling(font_size = font_size, full_width=FALSE, stripe_color = "lightgray", stripe_index = 0,
+                    latex_options = c("HOLD_position", "striped"), position = "center") %>%
+      column_spec(1, bold=T) %>%
+      row_spec(0, bold=T)
+  }
+}
+
+################# Matrice de Cramer pour corrplot ############################################
+cv <- function(x, y) {
+  t <- table(x, y)
+  chi <- suppressWarnings(chisq.test(t))$statistic
+  cramer <- sqrt(chi / (length(x) * (min(dim(t)) - 1)))
+  cramer
+}
+
+cramer.matrix<-function(y, fill = TRUE){
+  col.y<-ncol(y)
+  V<-matrix(ncol=col.y,nrow=col.y)
+  for(i in 1:(col.y - 1)){
+    for(j in (i + 1):col.y){
+      V[i,j]<-cv(pull(y,i),pull(y,j))
+    }
+  }
+  diag(V) <- 1 
+  if (fill) {
+    for (i in 1:ncol(V)) {
+      V[, i] <- V[i, ]
+    }
+  }
+  colnames(V)<-names(y)
+  rownames(V)<-names(y)
+  V
+}
+```
+
+# Introduction
+
+```{r}
+setwd("D:/Comission_europeenne")
+data <- read_excel("data_perso.xlsx")
+
+data[c(6:26, 28:37)] <- sapply(data[c(6:26, 28:37)],as.numeric)
+data$Country <- as.factor(data$Country)
+
+## we create the variable period: Quarter-Year
+data <- data %>% unite(Period, c(Quarter, Year), sep = "-", remove = FALSE)
+data <- data[,-c(2, 4:6, 28, 39)]
+```
+
+```{r}
+data <- data %>% rename(
+  school_closing=`C1_School closing`, worplace_closing=`C2_Workplace closing`,
+  cancel_public_events=`C3_Cancel public events`, close_public_transport=`C5_Close public transport`, 
+  restrictions_on_gathering=`C4_Restrictions on gatherings`,
+  stay_at_home_requirements=`C6_Stay at home requirements`,
+  restrictions_on_internal_movement=`C7_Restrictions on internal movement`,
+  international_travel_controls=`C8_International travel controls`,
+  income_support=`E1_Income support`,
+  public_information_campaings=`H1_Public information campaigns`,
+  testing_policy=`H2_Testing policy`, contact_tracing=`H3_Contact tracing`,
+  emergency_investment_in_healthcare=`H4_Emergency investment in healthcare`,
+  investment_in_vaccines=`H5_Investment in vaccines`,
+  facial_coverings=`H6_Facial Coverings`, vaccination_policy=`H7_Vaccination policy`
+)
+```
+
+
+First, we delete the rows that have missing values:
+
+```{r}
+data_bis <- na.omit(data)
+data_bis <- droplevels(data_bis)
+data_bis$Period <- as.factor(data_bis$Period)
+```
+
+## Cylinder panel
+
+We verify that we have a cylinder panel:
+
+```{r}
+cyl <- pdim(data_bis)
+cyl_tab <- cbind(cyl$nT[1], cyl$nT[2], cyl$balanced)
+colnames(cyl_tab) <- c("Countries", "Period", "Cylinder")
+rownames(cyl_tab) <- c("Value")
+tab_fun(cyl_tab, title = "Description of the panel")
+```
+
+```{r}
+table(data_bis$Country)
+```
+
+The panel is not cylinder. This is due at Korea which has only 28 values out of 84. So I removed it:
+
+```{r}
+data_bis <- data_bis[!data_bis$Country=="Korea",]
+data_bis <- droplevels(data_bis)
+```
+
+```{r}
+cyl <- pdim(data_bis)
+cyl_tab <- cbind(cyl$nT[1], cyl$nT[2], cyl$balanced)
+colnames(cyl_tab) <- c("Countries", "Period", "Cylinder")
+rownames(cyl_tab) <- c("Value")
+tab_fun(cyl_tab, title = "Description of the panel")
+```
+
+Now, we have 84 periods by country and 24 countries.
+
+# Model for stringency index by productivity for each sector
+
+## Heterogeneity test
+
+First, we test the pooling model versus the within model with the Chow test.
+
+```{r}
+model_stringency <- StringencyIndex ~ agriculture_forestry_fishing_euro + other_service_activities_euro +
+  construction_euro + financial_insurance_euro + industry_no_construction_euro + 
+  information_communication_euro + public_defence_education_health_social_euro +
+  professionnal_scientific_technical_administrative_support_euro + 
+  real_estate_euro + wholesale_retail_transport_accomodation_food_euro
+```
+
+```{r}
+pooling_model_stringency <- plm(model_stringency, data = data_bis, model = "pooling", 
+                                index=c("Country", "Period"))
+within_model_stringency <- plm(model_stringency, data = data_bis, model = "within", 
+                               index=c("Country", "Period"))
+pooltest(pooling_model_stringency, within_model_stringency)
+```
+
+The p-value is strictly below 0.01, so we reject $H_0$, the within model is strictly better than the pooling model.
+
+Now we test the within model against the random effect model using the Hausman test:
+
+```{r}
+random_model_stringency <- plm(model_stringency, data = data_bis, model = "random", 
+                               index=c("Country", "Period"))
+phtest(within_model_stringency, random_model_stringency)
+```
+
+Because the p-value is lower than 0.01, we reject $H_0$, the within model is strictly better than the random model.
+
+## Heteroskedasticity
+
+Now, we need to check if our within model has heteroskedasticity:
+
+```{r}
+bptest(within_model_stringency)
+```
+
+The p-value is strictly under 0.05, so we reject $H_0$ which means that the variant is not constant accross individuals. We have heteroskedasticity.
+
+We will correct heteroskedasticity:
+
+```{r}
+data_bis$residuals_stringency <- within_model_stringency$residuals
+varfunc.ols2 <- plm(log(residuals_stringency^2) ~ log(agriculture_forestry_fishing_euro) +
+                      log(other_service_activities_euro) + log(construction_euro) +
+                      log(financial_insurance_euro) + log(industry_no_construction_euro) +
+                      log(information_communication_euro) +
+                      log(public_defence_education_health_social_euro) +
+                      log(professionnal_scientific_technical_administrative_support_euro) + 
+                      log(real_estate_euro) + log(wholesale_retail_transport_accomodation_food_euro),
+                    data=data_bis, model="within")
+
+data_bis$varfunc2 <- exp(varfunc.ols2$model[1,1])
+
+within_model_stringency <- plm(model_stringency, data = data_bis, model = "within", 
+                               index=c("Country", "Period"), weights = 1/sqrt(varfunc2))
+```
+
+## Final model
+
+The final model with stringency index a
+
+```{r}
+stargazer(within_model_stringency, type="text")
+```
+
+
+
+# Model for government response index by productivity for each sector
+
+## Heterogeneity test
+
+First, we test the pooling model versus the within model with the Chow test.
+
+```{r}
+model_government <- GovernmentResponseIndex ~ agriculture_forestry_fishing_euro +
+  other_service_activities_euro + construction_euro + financial_insurance_euro +
+  industry_no_construction_euro + information_communication_euro +
+  public_defence_education_health_social_euro +
+  professionnal_scientific_technical_administrative_support_euro + 
+  real_estate_euro + wholesale_retail_transport_accomodation_food_euro
+```
+
+```{r}
+pooling_model_government <- plm(model_government, data = data_bis, model = "pooling", 
+                                index=c("Country", "Period"))
+within_model_government <- plm(model_government, data = data_bis, model = "within", 
+                               index=c("Country", "Period"))
+pooltest(pooling_model_government, within_model_government)
+```
+
+The p-value is strictly below 0.01, so we reject $H_0$, the within model is strictly better than the pooling model.
+
+Now we test the within model against the random effect model using the Hausman test:
+
+```{r}
+random_model_government <- plm(model_government, data = data_bis, model = "random", 
+                               index=c("Country", "Period"))
+phtest(within_model_government, random_model_government)
+```
+
+Because the p-value is lower than 0.01, we reject $H_0$, the within model is strictly better than the random model.
+
+## Heteroskedasticity
+
+Now, we need to check if our within model has heteroskedasticity:
+
+```{r}
+bptest(within_model_government)
+```
+
+The p-value is strictly under 0.05, so we reject $H_0$ which means that the variant is not constant accross individuals. We have heteroskedasticity.
+
+We will correct heteroskedasticity:
+
+```{r}
+data_bis$residuals_government <- within_model_government$residuals
+varfunc.ols2 <- plm(log(residuals_government^2) ~ log(agriculture_forestry_fishing_euro) +
+                      log(other_service_activities_euro) + log(construction_euro) +
+                      log(financial_insurance_euro) + log(industry_no_construction_euro) +
+                      log(information_communication_euro) +
+                      log(public_defence_education_health_social_euro) +
+                      log(professionnal_scientific_technical_administrative_support_euro) + 
+                      log(real_estate_euro) + log(wholesale_retail_transport_accomodation_food_euro),
+                    data=data_bis, model="within")
+
+data_bis$varfunc2 <- exp(varfunc.ols2$model[1,1])
+
+within_model_government <- plm(model_government, data = data_bis, model = "within", 
+                               index=c("Country", "Period"), weights = 1/sqrt(varfunc2))
+```
+
+## Final model
+
+```{r}
+stargazer(within_model_government, type="text")
+```
+
+
+# Model for containment and health index by productivity for each sector
+
+## Heterogeneity test
+
+First, we test the pooling model versus the within model with the Chow test.
+
+```{r}
+model_containment <- ContainmentHealthIndex ~ agriculture_forestry_fishing_euro +
+  other_service_activities_euro + construction_euro + financial_insurance_euro +
+  industry_no_construction_euro + information_communication_euro +
+  public_defence_education_health_social_euro +
+  professionnal_scientific_technical_administrative_support_euro + 
+  real_estate_euro + wholesale_retail_transport_accomodation_food_euro
+```
+
+```{r}
+pooling_model_containment <- plm(model_containment, data = data_bis, model = "pooling", 
+                                index=c("Country", "Period"))
+within_model_containment <- plm(model_containment, data = data_bis, model = "within", 
+                               index=c("Country", "Period"))
+pooltest(pooling_model_containment, within_model_containment)
+```
+
+The p-value is strictly below 0.01, so we reject $H_0$, the within model is strictly better than the pooling model.
+
+Now we test the within model against the random effect model using the Hausman test:
+
+```{r}
+random_model_containment <- plm(model_containment, data = data_bis, model = "random", 
+                               index=c("Country", "Period"))
+phtest(within_model_containment, random_model_containment)
+```
+
+Because the p-value is lower than 0.01, we reject $H_0$, the within model is strictly better than the random model.
+
+## Heteroskedasticity
+
+Now, we need to check if our within model has heteroskedasticity:
+
+```{r}
+bptest(within_model_containment)
+```
+
+The p-value is strictly under 0.05, so we reject $H_0$ which means that the variant is not constant accross individuals. We have heteroskedasticity.
+
+We will correct heteroskedasticity:
+
+```{r}
+data_bis$residuals_containment <- within_model_containment$residuals
+varfunc.ols2 <- plm(log(residuals_containment^2) ~ log(agriculture_forestry_fishing_euro) +
+                      log(other_service_activities_euro) + log(construction_euro) +
+                      log(financial_insurance_euro) + log(industry_no_construction_euro) +
+                      log(information_communication_euro) +
+                      log(public_defence_education_health_social_euro) +
+                      log(professionnal_scientific_technical_administrative_support_euro) + 
+                      log(real_estate_euro) + log(wholesale_retail_transport_accomodation_food_euro),
+                    data=data_bis, model="within")
+
+data_bis$varfunc2 <- exp(varfunc.ols2$model[1,1])
+
+within_model_containment <- plm(
+  model_containment, data = data_bis, model = "within", 
+  index=c("Country", "Period"), weights = 1/sqrt(varfunc2))
+```
+
+## Final model
+
+```{r}
+stargazer(within_model_containment, type="text")
+```
+
+
+# Model for economic support index by productivity for each sector
+
+## Heterogeneity test
+
+First, we test the pooling model versus the within model with the Chow test.
+
+```{r}
+model_economic <- EconomicSupportIndex ~ agriculture_forestry_fishing_euro +
+  other_service_activities_euro + construction_euro + financial_insurance_euro +
+  industry_no_construction_euro + information_communication_euro +
+  public_defence_education_health_social_euro +
+  professionnal_scientific_technical_administrative_support_euro + 
+  real_estate_euro + wholesale_retail_transport_accomodation_food_euro
+```
+
+```{r}
+pooling_model_economic <- plm(model_economic, data = data_bis, model = "pooling", 
+                                index=c("Country", "Period"))
+within_model_economic <- plm(model_economic, data = data_bis, model = "within", 
+                               index=c("Country", "Period"))
+pooltest(pooling_model_economic, within_model_economic)
+```
+
+The p-value is strictly below 0.01, so we reject $H_0$, the within model is strictly better than the pooling model.
+
+Now we test the within model against the random effect model using the Hausman test:
+
+```{r}
+random_model_economic <- plm(model_economic, data = data_bis, model = "random", 
+                               index=c("Country", "Period"))
+phtest(within_model_economic, random_model_economic)
+```
+
+Because the p-value is lower than 0.01, we reject $H_0$, the within model is strictly better than the random model.
+
+## Heteroskedasticity
+
+Now, we need to check if our within model has heteroskedasticity:
+
+```{r}
+bptest(within_model_economic)
+```
+
+The p-value is strictly under 0.05, so we reject $H_0$ which means that the variant is not constant accross individuals. We have heteroskedasticity.
+
+We will correct heteroskedasticity:
+
+```{r}
+data_bis$residuals_economic <- within_model_economic$residuals
+varfunc.ols2 <- plm(log(residuals_economic^2) ~ log(agriculture_forestry_fishing_euro) +
+                      log(other_service_activities_euro) + log(construction_euro) +
+                      log(financial_insurance_euro) + log(industry_no_construction_euro) +
+                      log(information_communication_euro) +
+                      log(public_defence_education_health_social_euro) +
+                      log(professionnal_scientific_technical_administrative_support_euro) + 
+                      log(real_estate_euro) + log(wholesale_retail_transport_accomodation_food_euro),
+                    data=data_bis, model="within")
+
+data_bis$varfunc2 <- exp(varfunc.ols2$model[1,1])
+
+within_model_economic <- plm(
+  model_economic, data = data_bis, model = "within", 
+  index=c("Country", "Period"), weights = 1/sqrt(varfunc2))
+```
+
+## Final model
+
+```{r}
+stargazer(within_model_economic, type="text")
+```
+
+
+# All the models
+
+```{r}
+stargazer(
+  within_model_economic, within_model_containment, within_model_government, within_model_stringency,
+  type="latex"
+  )
+```
+
+# Other things done
+
+## Correlation
+
+```{r}
+require(corrplot)
+require(doParallel)
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+corrplot(cramer.matrix(data[,-c(24:43)]), type="lower", diag=FALSE, tl.col="black")
+
+stopImplicitCluster()
+```
+
+High correlation between variables.
+
+## Graphics for heterogeneity between countries
+
+```{r}
+require(gplots)
+plotmeans(agriculture_forestry_fishing_euro ~ Country, 
+          main="Heterogeineity across countries for agriculture, forestry and fishing",
+          data=data_bis)
+plotmeans(other_service_activities_euro ~ Country, 
+          main="Heterogeineity across countries for other service activities",
+          data=data_bis)
+plotmeans(construction_euro ~ Country, main="Heterogeineity across countries for construction",
+          data=data_bis)
+plotmeans(financial_insurance_euro ~ Country, 
+          main="Heterogeineity across countries for financial insurance",
+          data=data_bis)
+plotmeans(industry_no_construction_euro ~ Country, 
+          main="Heterogeineity across countries for industry(no construction)",
+          data=data_bis)
+plotmeans(information_communication_euro ~ Country,
+          main="Heterogeineity across countries for information and communication",
+          data=data_bis)
+plotmeans(professionnal_scientific_technical_administrative_support_euro ~ Country,
+          main="Heterogeineity across countries for professionnal, scientific, 
+          technical and administrative support", 
+          data=data_bis)
+plotmeans(public_defence_education_health_social_euro ~ Country, 
+          main="Heterogeineity across countries for public, defence, education and health social",
+          data=data_bis)
+plotmeans(real_estate_euro ~ Country, 
+          main="Heterogeineity across countries for real estate",
+          data=data_bis)
+plotmeans(wholesale_retail_transport_accomodation_food_euro ~ Country, 
+          main="Heterogeineity across countries for wholesale, retail, transport and accomodation food", 
+          data=data_bis)
+```
+
+## Graphics for heterogeneity accross periods
+
+```{r}
+require(gplots)
+plotmeans(agriculture_forestry_fishing_euro ~ Period, 
+          main="Heterogeineity across periods for agriculture, forestry and fishing",
+          data=data_bis)
+plotmeans(other_service_activities_euro ~ Period, 
+          main="Heterogeineity across periods for other service activities",
+          data=data_bis)
+plotmeans(construction_euro ~ Period, main="Heterogeineity across periods for construction",
+          data=data_bis)
+plotmeans(financial_insurance_euro ~ Period, 
+          main="Heterogeineity across periods for financial insurance",
+          data=data_bis)
+plotmeans(industry_no_construction_euro ~ Period, 
+          main="Heterogeineity across periods for industry(no construction)",
+          data=data_bis)
+plotmeans(information_communication_euro ~ Period,
+          main="Heterogeineity across periods for information and communication",
+          data=data_bis)
+plotmeans(professionnal_scientific_technical_administrative_support_euro ~ Period,
+          main="Heterogeineity across periods for professionnal, scientific, 
+          technical and administrative support", 
+          data=data_bis)
+plotmeans(public_defence_education_health_social_euro ~ Period, 
+          main="Heterogeineity across periods for public, defence, education and health social",
+          data=data_bis)
+plotmeans(real_estate_euro ~ Period, 
+          main="Heterogeineity across periods for real estate",
+          data=data_bis)
+plotmeans(wholesale_retail_transport_accomodation_food_euro ~ Period, 
+          main="Heterogeineity across periods for wholesale, retail, transport and accomodation food", 
+          data=data_bis)
+```
+
